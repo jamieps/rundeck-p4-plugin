@@ -85,6 +85,7 @@ jar {
         attributes 'Rundeck-Plugin-Description': pluginDescription
         def libList = configurations.pluginLibs.collect { 'lib/' + it.name }.join(' ')
         attributes 'Rundeck-Plugin-Libs': "${libList}"
+        attributes 'Rundeck-Plugin-Archive': 'true'
     }
 }
 
