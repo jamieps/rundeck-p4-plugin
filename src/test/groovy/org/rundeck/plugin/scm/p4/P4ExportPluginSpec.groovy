@@ -8,12 +8,9 @@ import com.perforce.p4java.core.IChangelist
 import com.perforce.p4java.core.file.FileSpecBuilder
 import com.perforce.p4java.core.file.IFileSpec
 import com.perforce.p4java.impl.generic.core.User
-import com.perforce.p4java.impl.mapbased.client.Client
 import com.perforce.p4java.option.changelist.SubmitOptions
 import com.perforce.p4java.option.client.AddFilesOptions
 import com.perforce.p4java.option.client.EditFilesOptions
-import com.perforce.p4java.server.IServer
-import com.perforce.p4java.server.ServerFactory
 import org.rundeck.plugin.scm.p4.config.Config
 import org.rundeck.plugin.scm.p4.config.Export
 import org.rundeck.plugin.scm.p4.exp.actions.CommitJobsAction
@@ -25,8 +22,6 @@ import spock.lang.Unroll
  * Created by greg on 8/31/15.
  */
 class P4ExportPluginSpec extends Specification {
-    private static final String DEFAULT_P4D_PATH = "/usr/local/sbin/p4d"
-
     File tempDir
 
     def setup() {
@@ -86,7 +81,7 @@ class P4ExportPluginSpec extends Specification {
         def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
         //create a p4 dir
-        def git = createPerforceServer(originDir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(originDir))
         git.close()
 
         def context = Mock(ScmOperationContext)
@@ -114,7 +109,7 @@ class P4ExportPluginSpec extends Specification {
                 ]
         )
         //create a p4 dir
-        createPerforceServer(origindir)
+        P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
 
         //create plugin
         def plugin = new P4ExportPlugin(config)
@@ -136,12 +131,12 @@ class P4ExportPluginSpec extends Specification {
     def "re initialize plugin with new url"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
-        def origin2dir = new File(tempdir, 'origin2')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
+        def origin2dir = new File(tempDir, 'origin2')
         Export config = createTestConfig(gitdir, origindir)
         //create a p4 dir
-        def server = createPerforceServer(origindir)
+        def server = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         def commit = addCommitFile(origindir, server, 'testcommit.txt', 'blah')
         server.disconnect()
 
@@ -157,7 +152,7 @@ class P4ExportPluginSpec extends Specification {
 
         //create origin2
         Export config2 = createTestConfig(gitdir, origin2dir)
-        def server2 = createPerforceServer(origin2dir)
+        def server2 = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origin2dir))
         def commit2 = addCommitFile(origin2dir, server2, 'testcommit.txt', 'blee')
         server2.disconnect()
 
@@ -178,11 +173,11 @@ class P4ExportPluginSpec extends Specification {
     def "re initialize plugin with new branch"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         def commit = addCommitFile(origindir, git, 'testcommit.txt', 'blah')
         git.close()
 
@@ -223,11 +218,11 @@ class P4ExportPluginSpec extends Specification {
     def "re initialize plugin with same branch"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         def commit = addCommitFile(origindir, git, 'testcommit.txt', 'blah')
         git.close()
 
@@ -266,12 +261,12 @@ class P4ExportPluginSpec extends Specification {
     def "get input view for commit action"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
         def context = Mock(ScmOperationContext)
         def plugin = new P4ExportPlugin(config)
@@ -322,7 +317,7 @@ class P4ExportPluginSpec extends Specification {
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
 
         git.close()
         def plugin = new P4ExportPlugin(config)
@@ -352,12 +347,12 @@ class P4ExportPluginSpec extends Specification {
     def "get job status, exists in repo"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         def commit = addCommitFile(origindir, git, 'a/b/name-xyz.xml', 'blah')
 
         git.close()
@@ -402,12 +397,12 @@ class P4ExportPluginSpec extends Specification {
     def "get file diff, new content"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         if (orig) {
             def commit = addCommitFile(origindir, git, 'a/b/name-xyz.xml', orig)
         }
@@ -451,12 +446,12 @@ class P4ExportPluginSpec extends Specification {
     def "get status clean"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
         def plugin = new P4ExportPlugin(config)
         plugin.initialize(Mock(ScmOperationContext))
@@ -473,12 +468,12 @@ class P4ExportPluginSpec extends Specification {
     def "get status fetch fails"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
         def plugin = new P4ExportPlugin(config)
         plugin.initialize(Mock(ScmOperationContext))
@@ -525,12 +520,12 @@ class P4ExportPluginSpec extends Specification {
     def "get local file and path for job"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir, [pathTemplate: template])
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
         def plugin = new P4ExportPlugin(config)
         plugin.initialize(Mock(ScmOperationContext))
@@ -563,35 +558,6 @@ class P4ExportPluginSpec extends Specification {
         null      | 'job-xyz.xml'      | 'job-${job.id}.xml'
     }
 
-    static String getPerforceRshURI(final File serverRoot) {
-        String p4dPath      = DEFAULT_P4D_PATH
-        String envP4dPath   = System.getenv("RUNDECK_P4D_PATH")
-        if (envP4dPath != null && !envP4dPath.isEmpty()) {
-            p4dPath = envP4dPath
-        }
-        return "p4jrsh://${p4dPath} -r ${serverRoot.getAbsolutePath()} -L p4d.log -i --java"
-    }
-
-    static IServer createPerforceServer(final File serverRoot, final File clientRoot) {
-        serverRoot.mkdirs()
-        String uri      = getPerforceRshURI(serverRoot)
-        println uri
-        IServer server  = ServerFactory.getServer(uri, null)
-        server.setUserName("p4java")
-        server.connect()
-
-        IClient tempClient  = new Client()
-        String clientName   = "tempClient" + UUID.randomUUID().toString().replace("-", "")
-        tempClient.setName(clientName);
-        tempClient.setDescription("P4Java temporary client for unit testing")
-        tempClient.setRoot(clientRoot.getAbsolutePath())
-        server.createClient(tempClient)
-        tempClient.refresh()
-        server.setCurrentClient(tempClient)
-
-        server
-    }
-
     @Unroll
     def "scm state for status"(Map data, String scmStatus) {
         given:
@@ -604,7 +570,7 @@ class P4ExportPluginSpec extends Specification {
 
         def ctxt = Mock(ScmOperationContext)
         //create a p4 dir
-        createPerforceServer(origindir)
+        P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         def plugin = new P4ExportPlugin(config)
         plugin.initialize(ctxt)
 
@@ -656,12 +622,12 @@ class P4ExportPluginSpec extends Specification {
     def "job commit with no changes"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
         def userInfo = Mock(ScmUserInfo)
         def ctxt = Mock(ScmOperationContext) {
@@ -685,12 +651,12 @@ class P4ExportPluginSpec extends Specification {
     def "job commit with missing commit message"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
         def userInfo = Mock(ScmUserInfo)
         def ctxt = Mock(ScmOperationContext) {
@@ -714,12 +680,12 @@ class P4ExportPluginSpec extends Specification {
     def "commit job no local changes"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo)
@@ -744,12 +710,12 @@ class P4ExportPluginSpec extends Specification {
     def "commit missing jobs and paths"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo)
@@ -775,12 +741,12 @@ class P4ExportPluginSpec extends Specification {
     def "commit with deleted paths that do not exist in repo"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo)
@@ -808,12 +774,12 @@ class P4ExportPluginSpec extends Specification {
     def "commit with invalid tag should fail at validation without committing"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo)
@@ -853,12 +819,12 @@ class P4ExportPluginSpec extends Specification {
     def "tag action with invalid tag should fail at validation"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo)
@@ -887,12 +853,12 @@ class P4ExportPluginSpec extends Specification {
     def "push action with invalid tag should fail at validation"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo)
@@ -921,15 +887,15 @@ class P4ExportPluginSpec extends Specification {
     def "commit missing user info"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir, [
                 committerName : '${user.fullName}',
                 committerEmail: '${user.email}',]
         )
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def userInfo = Mock(ScmUserInfo) {
@@ -971,12 +937,12 @@ class P4ExportPluginSpec extends Specification {
     def "job change delete removes file"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def ctxt = Mock(ScmOperationContext) {
@@ -1014,12 +980,12 @@ class P4ExportPluginSpec extends Specification {
     def "job change modify overwrites file"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def ctxt = Mock(ScmOperationContext) {
@@ -1067,12 +1033,12 @@ class P4ExportPluginSpec extends Specification {
     def "job change serializer fails does not overwrite file"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def ctxt = Mock(ScmOperationContext) {
@@ -1119,12 +1085,12 @@ class P4ExportPluginSpec extends Specification {
     def "job change create creates file"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def ctxt = Mock(ScmOperationContext) {
@@ -1171,12 +1137,12 @@ class P4ExportPluginSpec extends Specification {
     def "job change modify-rename removes old and writes new file"() {
         given:
 
-        def gitdir = new File(tempdir, 'scm')
-        def origindir = new File(tempdir, 'origin')
+        def gitdir = new File(tempDir, 'scm')
+        def origindir = new File(tempDir, 'origin')
         Export config = createTestConfig(gitdir, origindir)
 
         //create a p4 dir
-        def git = createPerforceServer(origindir)
+        def git = P4Utils.getPerforceServer(P4Utils.createPerforceServer(origindir))
         git.close()
 
         def ctxt = Mock(ScmOperationContext) {

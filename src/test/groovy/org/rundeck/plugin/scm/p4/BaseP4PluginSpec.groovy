@@ -4,10 +4,7 @@ import com.dtolabs.rundeck.plugins.scm.*
 import com.perforce.p4java.client.IClient
 import com.perforce.p4java.core.file.FileSpecOpStatus
 import com.perforce.p4java.core.file.IFileSpec
-import com.perforce.p4java.impl.generic.client.ClientView
-import com.perforce.p4java.impl.mapbased.client.Client
 import com.perforce.p4java.server.IServer
-import com.perforce.p4java.server.ServerFactory
 import org.rundeck.plugin.scm.p4.config.Common
 import spock.lang.Specification
 
@@ -289,8 +286,8 @@ class BaseP4PluginSpec extends Specification {
         File tmpServerRoot = File.createTempDir("BaseP4PluginSpec", "-test")
         tmpServerRoot.deleteOnExit()
 
-        IServer p4Server = createPerforceServer(tmpServerRoot)
-        IClient p4Client = createPerforceClient(p4Server, scmDir)
+        IServer p4Server = P4Utils.getPerforceServer(P4Utils.createPerforceServer(tmpServerRoot))
+        IClient p4Client = P4Utils.createPerforceClient(p4Server, scmDir)
 
         Common config = new Common()
         config.p4ClientName = p4Client.getName()
@@ -319,14 +316,14 @@ class BaseP4PluginSpec extends Specification {
         def tmpServerRoot = File.createTempDir("BaseP4PluginSpec", "-test")
         tmpServerRoot.deleteOnExit()
 
-        IServer p4Server = createPerforceServer(tmpServerRoot)
-        IClient p4Client = createPerforceClient(p4Server, scmDir1)
+        IServer p4Server = P4Utils.getPerforceServer(P4Utils.createPerforceServer(tmpServerRoot))
+        IClient p4Client = P4Utils.createPerforceClient(p4Server, scmDir1)
         def commit1 = P4ExportPluginSpec.addCommitFile(scmDir1, p4Client,
                 'testFile', 'We have no time to stand and stare')
         def commit2 = P4ExportPluginSpec.addCommitFile(scmDir1, p4Client,
                 'testFile', 'What is this life if, full of care')
 
-        IClient p4Client2 = createPerforceClient(p4Server, scmDir2)
+        IClient p4Client2 = P4Utils.createPerforceClient(p4Server, scmDir2)
         Common config = new Common()
         config.p4ClientName = p4Client2.getName()
         def base = new BaseP4Plugin(config)
@@ -342,45 +339,7 @@ class BaseP4PluginSpec extends Specification {
         p4Client != null
         update != null
         update.get(0).getChangelistId() == 2
-        update.get(0).getClientPathString() == scmDir2.getAbsolutePath() + "/testFile"
-    }
-
-    static String getUri(final File serverRoot) {
-        String p4dPath      = "/usr/local/sbin/p4d"
-        String envP4dPath   = System.getenv("RUNDECK_P4D_PATH")
-        if (envP4dPath && !envP4dPath.isEmpty()) {
-            p4dPath = envP4dPath
-        }
-        return "p4jrsh://${p4dPath} -r ${serverRoot.getAbsolutePath()} -L p4d.log -i --java"
-    }
-
-    static IServer createPerforceServer(final File serverRoot) {
-        String uri          = getUri(serverRoot)
-        println uri
-        IServer server = ServerFactory.getServer(uri, null)
-        server.setUserName("p4java")
-        server.connect()
-        server
-    }
-
-    static IClient createPerforceClient(final IServer server, final File clientRoot) {
-        String clientName  = "tempClient" + UUID.randomUUID().toString().replace("-", "")
-        IClient tempClient = new Client(name: clientName,
-                description: "P4Java temporary client for unit testing",
-                root: clientRoot.getAbsolutePath(), server: server)
-
-        ClientView clientView = new ClientView()
-        ClientView.ClientViewMapping viewMap1 = new ClientView.ClientViewMapping()
-        viewMap1.setLeft("//depot/...")
-        viewMap1.setRight("//${clientName}/...")
-        clientView.addEntry(viewMap1)
-        tempClient.setClientView(clientView)
-
-        server.createClient(tempClient)
-        tempClient = server.getClient(clientName)
-        server.setCurrentClient(tempClient)
-
-        tempClient
+        update.get(0).getClientPathString() == scmDir2.getAbsolutePath() + File.separator + "testFile"
     }
 
     def "expand user string"() {

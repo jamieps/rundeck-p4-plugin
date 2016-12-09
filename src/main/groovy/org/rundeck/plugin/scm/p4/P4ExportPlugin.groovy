@@ -35,9 +35,9 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
 
 
     String format = SERIALIZE_FORMAT
-    boolean inited = false
-    String committerName;
-    String committerEmail;
+    boolean initialised = false
+    String committerName
+    String committerEmail
     Map<String, P4ExportAction> actions = [:]
     Export config
 
@@ -52,7 +52,7 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
                 (JOB_COMMIT_ACTION_ID)    : new CommitJobsAction(
                         JOB_COMMIT_ACTION_ID,
                         "Commit Changes to Perforce",
-                        "Commit changes to local Perforce repo."
+                        "Commit changes to Perforce repo."
                 ),
                 (PROJECT_COMMIT_ACTION_ID): new CommitJobsAction(
                         PROJECT_COMMIT_ACTION_ID,
@@ -80,8 +80,8 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
 
     void setup(ScmOperationContext context, Export config) throws ScmPluginException {
 
-        if (inited) {
-            log.debug("already inited, not doing setup")
+        if (initialised) {
+            log.debug("already initialised, not doing setup")
             return
         }
 
@@ -98,7 +98,7 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
         cloneOrCreate(context, base, config.uri)
 
         workingDir = base
-        inited = true
+        initialised = true
     }
 
     @Override
@@ -150,13 +150,11 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
         } else if (context.frameworkProject) {
             //actions in project view
             def status = getStatusInternal(context, false)
-            if (!status.gitStatus.clean) {
+            if (status.state == SynchState.EXPORT_NEEDED) {
+                // There are changes which need to be submitted.
                 actionRefs PROJECT_COMMIT_ACTION_ID
-            } else if (status.state == SynchState.EXPORT_NEEDED) {
-                //need a push
-                actionRefs PROJECT_PUSH_ACTION_ID
             } else if (status.state == SynchState.REFRESH_NEEDED) {
-                //need to fast forward
+                // There are changes server-side which should be sync'd.
                 actionRefs PROJECT_SYNCH_ACTION_ID
             } else if(!config.shouldFetchAutomatically()){
                 actionRefs PROJECT_FETCH_ACTION_ID
@@ -175,45 +173,62 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
     }
 
 
-    P4ExportSynchState getStatusInternal(ScmOperationContext context, boolean performFetch) {
-        //perform fetch
+    P4ExportSynchState getStatusInternal(ScmOperationContext context, boolean performSync) {
+        log.debug("getStatusInternal: context: ${context}")
+        // Perform sync
         def msgs = []
-        boolean fetchError = false
-        if (performFetch) {
+        boolean syncError = false
+        if (performSync) {
             try {
-                fetchFromRemote(context)
+                sync(context)
             } catch (Exception e) {
-                fetchError=true
-                msgs << "Fetch from the repository failed: ${e.message}"
-                logger.error("Failed fetch from the repository: ${e.message}")
-                logger.debug("Failed fetch from the repository: ${e.message}", e)
+                syncError = true
+                msgs << "Sync from the repository failed: ${e.message}"
+                logger.error("Failed to sync from the repository: ${e.message}")
+                logger.debug("Failed to sync from the repository: ${e.message}", e)
             }
         }
 
-        List<IFileSpec> fileStatus = p4Client.reconcileFiles(FileSpecBuilder.makeFileSpecList("//..."),
-                new ReconcileFilesOptions().setNoUpdate(true))
-
+        List<IFileSpec> clientRootSpec = FileSpecBuilder.makeFileSpecList("//${p4Client.getName()}/...")
         def synchState = new P4ExportSynchState()
-        synchState.p4Status = fileStatus
-        synchState.state = fileStatus.isEmpty() ? SynchState.CLEAN : SynchState.EXPORT_NEEDED
-        if (!fileStatus.isEmpty()) {
-            msgs << "Some changes have not been committed"
-        }
 
-        // if clean, check remote tracking status
-        if (fileStatus.isEmpty()) {
-            List<IFileSpec> syncFiles = p4Client.sync(FileSpecBuilder.makeFileSpecList("//..."),
-                    new SyncOptions().setNoUpdate(true))
-            if (!syncFiles.isEmpty() && fileStatus.isEmpty()) {
-                synchState.state = SynchState.REFRESH_NEEDED
-                //TODO: test if merge would fail
-            } else if (!syncFiles.isEmpty()) {
-                msgs << "${syncFiles.size()} changes need to be sync'd"
-                synchState.state = SynchState.REFRESH_NEEDED
+        List<IFileSpec> syncStatus = p4Client.sync(clientRootSpec, new SyncOptions().setNoUpdate(true))
+        syncStatus.each { fileSpec ->
+            if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
+                log.debug("sync: ${fileSpec.getDepotPath()} ${fileSpec.getClientPathString()} ${fileSpec.getAction()}")
+            } else {
+                log.error(fileSpec.getStatusMessage())
             }
         }
+
+        if (!syncStatus.isEmpty()) {
+            synchState.p4Status = syncStatus
+            synchState.state = SynchState.REFRESH_NEEDED
+            //TODO: test if merge would fail
+        } else if (!syncStatus.isEmpty()) {
+            msgs << "${syncStatus.size()} changes need to be sync'd"
+            synchState.state = SynchState.REFRESH_NEEDED
+        }
+
+        if (syncStatus.isEmpty()) {
+            List<IFileSpec> fileStatus = p4Client.reconcileFiles(clientRootSpec, new ReconcileFilesOptions().setNoUpdate(true))
+            fileStatus.each { fileSpec ->
+                if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
+                    log.debug("getStatusInternal: reconcile needed: ${fileSpec.getDepotPath()} ${fileSpec.getClientPathString()} ${fileSpec.getAction()}")
+                } else {
+                    log.error("getStatusInternal: ${fileSpec.getStatusMessage()}")
+                }
+            }
+
+            synchState.p4Status = fileStatus
+            synchState.state = fileStatus.isEmpty() ? SynchState.CLEAN : SynchState.EXPORT_NEEDED
+            if (!fileStatus.isEmpty()) {
+                msgs << "Some changes have not been committed"
+            }
+        }
+
         synchState.message = msgs ? msgs.join(', ') : null
-        if (fetchError && synchState.state == SynchState.CLEAN) {
+        if (syncError && synchState.state == SynchState.CLEAN) {
             synchState.state = SynchState.REFRESH_NEEDED
         }
 
@@ -225,19 +240,18 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
         File origfile = mapper.fileForJob(event.originalJobReference)
         File outfile = mapper.fileForJob(event.jobReference)
         String origPath = null
-        log.debug("Job event (${event}), writing to path: ${outfile}")
+        log.debug("Job event (${event}) - ${event.eventType}, writing to path: ${outfile}")
         switch (event.eventType) {
             case JobChangeEvent.JobChangeEventType.DELETE:
                 origfile.delete()
                 def status = refreshJobStatus(event.jobReference, origPath, false)
                 jobStateMap.remove(event.jobReference.id)
                 return createJobStatus(status, jobActionsForStatus(status))
-                break;
+                break
 
             case JobChangeEvent.JobChangeEventType.MODIFY_RENAME:
                 origPath = relativePath(event.originalJobReference)
-            case JobChangeEvent.JobChangeEventType.CREATE:
-            case JobChangeEvent.JobChangeEventType.MODIFY:
+            case [JobChangeEvent.JobChangeEventType.CREATE, JobChangeEvent.JobChangeEventType.MODIFY]:
                 if (origfile != outfile) {
                     origfile.delete()
                 }
@@ -248,11 +262,14 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
                 }
         }
         def status = refreshJobStatus(exportReference, origPath, false)
+        log.debug("jobChanged: export ref. ${exportReference} origfile: ${origfile} outfile: ${outfile} origPath: ${origPath} status: ${status}")
+        log.debug("jobChanged: job action for status: ${jobActionsForStatus(status)}")
         return createJobStatus(status, jobActionsForStatus(status))
     }
 
     private hasJobStatusCached(final JobExportReference job, final String originalPath) {
         def path = relativePath(job)
+        log.debug("hasJobStatusCached: relative path for job ${job.jobName}: ${path}")
 
         def commit = lastCommitForPath(path)
 
@@ -289,24 +306,25 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
             serialize(job, format)
         }
 
-        List<IFileSpec> checkPaths  = FileSpecBuilder.makeFileSpecList(path)
+        List<IFileSpec> checkPaths  = FileSpecBuilder.makeFileSpecList("//${p4Client.getName()}/${path}")
         if (originalPath) {
             checkPaths += new FileSpec(originalPath)
         }
 
+        List<IFileSpec> syncStatus = p4Client.sync(checkPaths, new SyncOptions().setNoUpdate(true))
         List<IFileSpec> reconcileStatus = p4Client.reconcileFiles(checkPaths,
                 new ReconcileFilesOptions().setNoUpdate(true))
         List<IFileSpec> openedFiles     = p4Client.openedFiles(FileSpecBuilder.makeFileSpecList(),
                 new OpenedFilesOptions())
 
         SynchState synchState = synchStateForStatus(reconcileStatus, openedFiles, commit, path)
-        def scmState = scmStateForStatus(status, commit, path)
+        def scmState = scmStateForStatus(reconcileStatus, openedFiles, commit, path)
         log.debug("for new path: commit ${commit}, synch: ${synchState}, scm: ${scmState}")
 
         if (originalPath) {
             def origCommit = lastCommitForPath(originalPath)
-            SynchState osynchState = synchStateForStatus(status, origCommit, originalPath)
-            def oscmState = scmStateForStatus(status, origCommit, originalPath)
+            SynchState osynchState = synchStateForStatus(reconcileStatus, openedFiles, origCommit, originalPath)
+            def oscmState = scmStateForStatus(reconcileStatus, openedFiles, origCommit, originalPath)
             log.debug("for original path: commit ${origCommit}, synch: ${osynchState}, scm: ${oscmState}")
             if (origCommit && !commit) {
                 commit = origCommit
@@ -326,8 +344,8 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
         jobstat['scm'] = scmState
         jobstat['path'] = path
         if (commit) {
-            jobstat['commitId'] = commit.name
-            jobstat['commitMeta'] = P4Util.metaForCommit(commit)
+            jobstat['commitId'] = commit.getId()
+            jobstat['commitMeta'] = P4Util.metaForCommit(commit, p4Server)
         }
         log.debug("refreshJobStatus(${job.id}): ${jobstat}")
 
@@ -338,13 +356,22 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
 
     private SynchState synchStateForStatus(List<IFileSpec> reconcileStatus, List<IFileSpec> openedFiles,
                                            IChangelistSummary change, String path) {
-        List<IFileSpec> untrackedNewFiles   = reconcileStatus.findAll { it.getAction() == FileAction.ADD }
+        path = "${p4Client.getRoot()}/${path}"
+        log.debug("synchStateForStatus: reconciled ${reconcileStatus.size()} file(s), " +
+                "opened ${openedFiles.size()} file(s), change: ${change?.getId()}, path: ${path}")
 
-        if (path && untrackedNewFiles.find { it.getLocalPathString().equals(path) } ||
-                !path && !untrackedNewFiles.isEmpty()) {
+        List<IFileSpec> unTrackedFiles   = reconcileStatus.findAll { it.getAction() == FileAction.ADD }
+
+        reconcileStatus.each { fileSpec ->
+            log.debug("reconcileStatus: ${fileSpec.getDepotPathString()} ${fileSpec.getAction()}, " +
+                    "client path: ${fileSpec.getClientPathString()}, local path: ${fileSpec.getLocalPathString()}")
+        }
+
+        if ((path && unTrackedFiles.find { it.getClientPathString() == path } != null) ||
+                (!path && !unTrackedFiles.isEmpty())) {
             SynchState.CREATE_NEEDED
-        } else if (path && openedFiles.find { it.getLocalPathString().equals(path) } ||
-                !path && !openedFiles.isEmpty()) {
+        } else if ((path && reconcileStatus.find { it.getClientPathString() == path } != null) ||
+                (!path && !openedFiles.isEmpty())) {
             SynchState.EXPORT_NEEDED
         } else if (change) {
             SynchState.CLEAN
@@ -355,21 +382,31 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
 
     def scmStateForStatus(List<IFileSpec> reconcileStatus, List<IFileSpec> openedFiles,
                           IChangelistSummary change, String path) {
-        IFileSpec pathSpec      = reconcileStatus.find { it.getLocalPathString() == path } ||
-                openedFiles.find { it.getLocalPathString() == path }
-        FileAction pathAction   = FileAction.ADD
-        pathAction              = pathSpec?.getAction()
+        path = "${p4Client.getRoot()}/${path}".toString()
+        reconcileStatus.each { fileSpec ->
+            if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
+                log.debug("reconciled: ${fileSpec.getDepotPath()} ${fileSpec.getClientPathString()} ${fileSpec.getAction()}")
+            } else {
+                log.error(fileSpec.getStatusMessage())
+            }
+        }
+        IFileSpec pathSpec      = reconcileStatus.find { path == it.getClientPathString() }
+        if (pathSpec == null) {
+            log.debug("${path} not found via reconcile")
+            pathSpec = openedFiles.find { path == it.getClientPathString() }
+        }
+        FileAction pathAction   = pathSpec?.getAction()
         // Find files which need resolving
-        List<IExtendedFileSpec> filesNeedResolve = server.getExtendedFiles(openedFiles, -1, -1, -1,
-                new FileStatOutputOptions().setOpenedNeedsResolvingFiles(true), null);
+        List<IExtendedFileSpec> filesNeedResolve = p4Server.getExtendedFiles(openedFiles, -1, -1, -1,
+                new FileStatOutputOptions().setOpenedNeedsResolvingFiles(true), null)
+
+        log.debug("scmStateForStatus: change: ${change} pathAction: ${pathAction}")
 
         if (!change) {
             new File(workingDir, path).exists() ? 'NEW' : 'NOT_FOUND'
         } else if (pathAction == FileAction.ADD) {
             'NEW'
         } else if (pathAction == FileAction.EDIT) {
-            //changed== changes in index
-            //modified == changes on disk
             'MODIFIED'
         } else if (pathAction == FileAction.DELETE) {
             'DELETED'
@@ -390,7 +427,7 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
     @Override
     JobState getJobStatus(final JobExportReference job, final String originalPath) {
         log.debug("getJobStatus(${job.id},${originalPath})")
-        if (!inited) {
+        if (!initialised) {
             return null
         }
         def status = hasJobStatusCached(job, originalPath)
@@ -423,7 +460,8 @@ class P4ExportPlugin extends BaseP4Plugin implements ScmExportPlugin {
         def path = originalPath ?: relativePath(job)
         serialize(job, format)
 
-        InputStream inputStream = p4Server.getFileContents(FileSpecBuilder.makeFileSpecList(path), false, true)
+        InputStream inputStream = p4Server.getFileContents(FileSpecBuilder
+                .makeFileSpecList("//${p4Client.getName()}/${path}"), false, true)
         def bytes = inputStream.getBytes()
         inputStream.close()
 

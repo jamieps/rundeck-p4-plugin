@@ -55,8 +55,8 @@ class P4Util {
     )
     {
         String leftSideStr = new String(leftSide)
-        def leftLines
-        def rightLines
+        def leftLines   = []
+        def rightLines  = []
         leftLines = leftSideStr.readLines()
         rightSide.eachLine { line -> rightLines << line }
         return diffContent(out, leftLines, rightLines)
@@ -120,7 +120,10 @@ class P4Util {
         List<String> unifiedDiff = DiffUtils.generateUnifiedDiff("left", "right", leftLines, patch, 4)
         if (!unifiedDiff.isEmpty() && out != null) {
             PrintWriter writer = out.newPrintWriter()
-            unifiedDiff.each { line -> writer.write(line) }
+            unifiedDiff.each { line ->
+                writer.write(line)
+                writer.write("\n")
+            }
             writer.close()
         }
 

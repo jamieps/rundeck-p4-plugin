@@ -2,10 +2,19 @@ package org.rundeck.plugin.scm.p4.exp.actions
 
 import com.dtolabs.rundeck.core.plugins.views.BasicInputView
 import com.dtolabs.rundeck.plugins.scm.*
+import com.perforce.p4java.client.IClient
+import com.perforce.p4java.core.ChangelistStatus
 import com.perforce.p4java.core.IChangelist
+import com.perforce.p4java.core.IUser
+import com.perforce.p4java.core.file.FileSpecBuilder
+import com.perforce.p4java.core.file.FileSpecOpStatus
 import com.perforce.p4java.core.file.IFileSpec
+import com.perforce.p4java.impl.generic.core.Changelist
+import com.perforce.p4java.impl.mapbased.server.Server
 import com.perforce.p4java.option.changelist.SubmitOptions
 import com.perforce.p4java.option.client.ReconcileFilesOptions
+import com.perforce.p4java.server.IOptionsServer
+import com.perforce.p4java.server.ServerFactory
 import org.rundeck.plugin.scm.p4.*
 
 /**
@@ -30,15 +39,15 @@ class CommitJobsAction extends BaseAction implements P4ExportAction {
                     BuilderUtil.property {
                         string P_MESSAGE
                         title "Commit Message"
-                        description "Enter a commit message. Committing to branch: `" + plugin.branch + '`'
+                        description "Enter a commit message."
                         required true
                         renderingAsTextarea()
                     },
 
                     BuilderUtil.property {
                         string LabelAction.P_LABEL_NAME
-                        title "Tag"
-                        description "Enter a tag name to include, will be pushed with the branch."
+                        title "Label"
+                        description "Enter a label name to use."
                         required false
                     },
 
@@ -62,49 +71,96 @@ class CommitJobsAction extends BaseAction implements P4ExportAction {
             final Map<String, String> input
     ) throws ScmPluginException
     {
-        // determine action
-        def internal = plugin.getStatusInternal(context, false)
+        def commitIdentName = plugin.expand(plugin.committerName, context.userInfo)
+        if (!commitIdentName) {
+            plugin.logger.debug("CommitJobsAction: no committer name")
+            ScmUserInfoMissing.fieldMissing("committerName")
+        }
+        def commitIdentEmail = plugin.expand(plugin.committerEmail, context.userInfo)
+        if (!commitIdentEmail) {
+            plugin.logger.debug("CommitJobsAction: no committer email")
+            ScmUserInfoMissing.fieldMissing("committerEmail")
+        }
+        String commitMessage = input[P_MESSAGE].toString()
+
+        // Impersonate the actual user we want to commit as
+        // TODO: We have to create a new IOptionsServer instance, this is inefficient.
+        // If we do not create a new instance of IOptionsServer and re-use the Server instance from the plugin
+        // then we will change the current Perforce user for all commands which may be running concurrently.
+        IOptionsServer srv = ServerFactory.getOptionsServer(plugin.config.uri, null)
+        srv.connect()
+        IUser committerUser = srv.getUser(commitIdentName)
+        if (committerUser == null) {
+            srv.disconnect()
+            throw new ScmPluginException("Committer username, ${commitIdentName}, is not valid")
+        }
+        srv.login(committerUser, null, null)
+        srv.setUserName(commitIdentName)
+
+        IClient srvClient = srv.getClient(plugin.p4Client.getName())
+
+        Changelist changeListImpl = new Changelist(IChangelist.UNKNOWN, plugin.p4Client.getName(), commitIdentName,
+                ChangelistStatus.NEW, new Date(), commitMessage, false, (Server)srv)
+        IChangelist change = srvClient.createChangelist(changeListImpl)
+
         // Determine what files have been added, edited, or deleted
-        List<IFileSpec> openedFiles = plugin.p4Client.reconcileFiles(new ArrayList<>(), new ReconcileFilesOptions())
+        List<IFileSpec> openedFiles = srvClient.reconcileFiles(FileSpecBuilder.makeFileSpecList("//..."),
+                new ReconcileFilesOptions(changelistId: change.getId()))
+        plugin.logger.debug("CommitJobsAction: ${openedFiles.size()} opened file(s)")
+        openedFiles?.each { fileSpec ->
+            if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
+                plugin.logger.debug("open: ${fileSpec.getDepotPath()}")
+            } else {
+                plugin.logger.error(fileSpec?.getStatusMessage())
+            }
+        }
+
+        change.update()
+
         def result = new ScmExportResultImpl()
 
         if (openedFiles.isEmpty()) {
             // No opened files but some jobs were selected
+            plugin.logger.debug("CommitJobsAction: no opened files")
             throw new ScmPluginException("No changes need to be exported - no opened files")
         }
         if (input[LabelAction.P_LABEL_NAME]) {
+            plugin.logger.debug("CommitJobsAction: label name specified")
             LabelAction.validateLabelDoesNotExist(plugin, input[LabelAction.P_LABEL_NAME])
             LabelAction.validateLabelName(input[LabelAction.P_LABEL_NAME])
         }
 
         if (!jobs && !pathsToDelete) {
+            plugin.logger.debug("CommitJobsAction: no jobs selected!")
             throw new ScmPluginException("No jobs were selected")
         }
         if (!input[P_MESSAGE]) {
+            plugin.logger.debug("CommitJobsAction: no message specified!")
             throw new ScmPluginException("A ${P_MESSAGE} is required")
-        }
-        def commitIdentName = plugin.expand(plugin.committerName, context.userInfo)
-        if (!commitIdentName) {
-            ScmUserInfoMissing.fieldMissing("committerName")
-        }
-        def commitIdentEmail = plugin.expand(plugin.committerEmail, context.userInfo)
-        if (!commitIdentEmail) {
-            ScmUserInfoMissing.fieldMissing("committerEmail")
         }
 
         plugin.serializeAll(jobs, plugin.format)
-        String commitMessage = input[P_MESSAGE].toString()
+        plugin.logger.debug("CommitJobsAction: committer: ${commitIdentName} ${commitIdentEmail} commit message: ${commitMessage}")
 
-        IChangelist change = plugin.p4Server.getChangelist(IChangelist.DEFAULT)
-        change.setDescription(commitMessage)
         List<String> p4Jobs = new ArrayList<>()
-        if (input[p_P4_JOB]) {
-            p4Jobs.add(input[p_P4_JOB])
+        if (input[P_P4_JOB]) {
+            p4Jobs.add(input[P_P4_JOB])
         }
-        change.submit(new SubmitOptions().setJobIds(p4Jobs))
+        List<IFileSpec> submittedFiles = change.submit(new SubmitOptions().setJobIds(p4Jobs))
+        submittedFiles?.each { fileSpec ->
+            if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
+                plugin.logger.debug("submitted: ${fileSpec.getDepotPath()}")
+            } else {
+                plugin.logger.error(fileSpec?.getStatusMessage())
+            }
+        }
+
+        // Change submitted, we can switch back to the global Perforce server instance.
+        srv.logout()
+        srv.disconnect()
 
         result.success = true
-        result.commit = new P4ScmCommit(P4Util.metaForCommit(commit))
+        result.commit = new P4ScmCommit(P4Util.metaForCommit(change, plugin.p4Server))
 
         if (result.success && input[LabelAction.P_LABEL_NAME]) {
             def tagResult = plugin.export(context, P4ExportPlugin.PROJECT_TAG_ACTION_ID, jobs, pathsToDelete, input)
@@ -115,8 +171,7 @@ class CommitJobsAction extends BaseAction implements P4ExportAction {
         if (result.success && input[P_PUSH] == 'true') {
             return plugin.export(context, P4ExportPlugin.PROJECT_PUSH_ACTION_ID, jobs, pathsToDelete, input)
         }
-        result.id = commit?.name
-
+        result.setId(String.valueOf(change?.getId()))
 
         result
     }

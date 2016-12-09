@@ -8,13 +8,13 @@ import com.dtolabs.rundeck.plugins.descriptions.PluginProperty
 class Export extends Common {
 
     @PluginProperty(
-            title = 'Committer Name',
-            description = '''Name of committer/author of changes.
+            title = 'Committer Username',
+            description = '''Username of committer/author of changes.
 
 Can be set to `${user.firstName} ${user.lastName}` or
 `${user.fullName}` to expand as the name
 of the committing user.''',
-            defaultValue = '${user.fullName}',
+            defaultValue = '${user.userName}',
             required = true
     )
     String committerName

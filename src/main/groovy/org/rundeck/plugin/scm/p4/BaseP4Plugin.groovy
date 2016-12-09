@@ -11,6 +11,7 @@ import com.perforce.p4java.core.IMapEntry
 import com.perforce.p4java.core.file.FileSpecBuilder
 import com.perforce.p4java.core.file.FileSpecOpStatus
 import com.perforce.p4java.core.file.IFileSpec
+import com.perforce.p4java.exception.RequestException
 import com.perforce.p4java.impl.generic.client.ClientView
 import com.perforce.p4java.impl.mapbased.client.Client
 import com.perforce.p4java.option.client.ResolveFilesAutoOptions
@@ -170,11 +171,12 @@ class BaseP4Plugin {
         jobExportReferences.each { serialize(it, format) }
     }
 
-    List<IFileSpec> fetchFromRemote(ScmOperationContext context) {
-        p4Client.sync([], new SyncOptions())
+    List<IFileSpec> sync(ScmOperationContext context) {
+        logger.debug("Performing sync...")
+        p4Client.sync(FileSpecBuilder.makeFileSpecList("//${p4Client.getName()}/..."), new SyncOptions())
     }
 
-    ScmExportResult p4Resolve() {
+    ScmExportResult p4Resolve(ScmOperationContext context) {
         def result      = new ScmExportResultImpl()
         result.success  = true
 
@@ -230,8 +232,19 @@ class BaseP4Plugin {
     }
 
     IChangelistSummary lastCommitForPath(String path) {
-        List<IChangelistSummary> changes = p4Server.getChangelists(1, FileSpecBuilder.makeFileSpecList(path),
-                p4Client.getName(), null, true, IChangelist.Type.SUBMITTED, false)
+        // For files/directories at the root, prefix specs with the client root.
+        if (!path.contains("/")) {
+            path = "//${p4Client.getName()}/${path}"
+        }
+        List<IChangelistSummary> changes = []
+        try {
+            changes = p4Server.getChangelists(1, FileSpecBuilder.makeFileSpecList(path),
+                    p4Client.getName(), null, true, IChangelist.Type.SUBMITTED, false)
+        }
+        catch (RequestException re) {
+            logger.warn("Perforce couldn't handle this request for changelists for ${path}: ${re.getDisplayString()}")
+            return null
+        }
         if (changes.isEmpty()) {
             return null
         }

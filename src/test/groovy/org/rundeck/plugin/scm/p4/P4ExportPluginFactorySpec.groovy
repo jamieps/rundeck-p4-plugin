@@ -122,7 +122,8 @@ class P4ExportPluginFactorySpec extends Specification {
         ]
 
         // create a p4 dir
-        def p4Server = P4ExportPluginSpec.createPerforceServer(p4ServerRoot, scmDir)
+        def p4Server = P4Utils.getPerforceServer(P4Utils.createPerforceServer(p4ServerRoot))
+        def p4Client = P4Utils.createPerforceClient(scmDir)
         def ctxt = Mock(ScmOperationContext) {
         }
 
