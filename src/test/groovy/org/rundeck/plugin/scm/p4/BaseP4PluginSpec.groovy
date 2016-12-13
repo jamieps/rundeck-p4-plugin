@@ -297,14 +297,14 @@ class BaseP4PluginSpec extends Specification {
         base.p4Client = p4Client
 
         when:
-        List<IFileSpec> update = base.fetchFromRemote(Mock(ScmOperationContext))
+        List<IFileSpec> update = base.sync(Mock(ScmOperationContext))
         update.each { IFileSpec spec ->
             println "${spec.getDepotPath()} ${spec.getOpStatus()} ${spec.getStatusMessage()} ${spec.getDate()}"
         }
 
         then:
         update[0].getOpStatus() == FileSpecOpStatus.ERROR
-        update[0].getStatusMessage() == "- no such file(s)."
+        update[0].getStatusMessage() =~ ".* - no such file\\(s\\)."
     }
 
     def "sync with changes"() {
@@ -331,7 +331,7 @@ class BaseP4PluginSpec extends Specification {
         base.p4Client = p4Client2
 
         when:
-        def update = base.fetchFromRemote(Mock(ScmOperationContext))
+        def update = base.sync(Mock(ScmOperationContext))
 
         then:
         commit1 != null

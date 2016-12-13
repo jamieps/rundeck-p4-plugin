@@ -13,6 +13,7 @@ import com.perforce.p4java.impl.generic.core.Changelist
 import com.perforce.p4java.impl.mapbased.server.Server
 import com.perforce.p4java.option.changelist.SubmitOptions
 import com.perforce.p4java.option.client.ReconcileFilesOptions
+import com.perforce.p4java.option.client.RevertFilesOptions
 import com.perforce.p4java.server.IOptionsServer
 import com.perforce.p4java.server.ServerFactory
 import org.rundeck.plugin.scm.p4.*
@@ -99,14 +100,27 @@ class CommitJobsAction extends BaseAction implements P4ExportAction {
 
         IClient srvClient = srv.getClient(plugin.p4Client.getName())
 
-        Changelist changeListImpl = new Changelist(IChangelist.UNKNOWN, plugin.p4Client.getName(), commitIdentName,
+        Changelist changeListImpl = new Changelist(IChangelist.UNKNOWN,
+                plugin.p4Client.getName(), commitIdentName,
                 ChangelistStatus.NEW, new Date(), commitMessage, false, (Server)srv)
         IChangelist change = srvClient.createChangelist(changeListImpl)
 
+        jobs.each { job -> plugin.logger.debug("CommitJobsAction job id: ${job.id} name: ${job.jobName} " +
+                "groupPath: ${job.groupPath} jobAndGroup: ${job.jobAndGroup}") }
+
         // Determine what files have been added, edited, or deleted
-        List<IFileSpec> openedFiles = srvClient.reconcileFiles(FileSpecBuilder.makeFileSpecList("//..."),
+
+        // First clean workspace
+        srvClient.revertFiles([], new RevertFilesOptions())
+
+        // Build a list of specs to reconcile
+        List<IFileSpec> fileSpecs   = FileSpecBuilder.makeFileSpecList(jobs.collect({
+            "//${srvClient.getName()}/${plugin.relativePath(it)}".toString()
+        }))
+        List<IFileSpec> openedFiles = srvClient.reconcileFiles(fileSpecs,
                 new ReconcileFilesOptions(changelistId: change.getId()))
-        plugin.logger.debug("CommitJobsAction: ${openedFiles.size()} opened file(s)")
+
+        plugin.logger.debug("CommitJobsAction: ${openedFiles.size()} opened file(s) (${fileSpecs} -> ${openedFiles}")
         openedFiles?.each { fileSpec ->
             if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
                 plugin.logger.debug("open: ${fileSpec.getDepotPath()}")
@@ -146,20 +160,31 @@ class CommitJobsAction extends BaseAction implements P4ExportAction {
         if (input[P_P4_JOB]) {
             p4Jobs.add(input[P_P4_JOB])
         }
+        result.success = true
         List<IFileSpec> submittedFiles = change.submit(new SubmitOptions().setJobIds(p4Jobs))
         submittedFiles?.each { fileSpec ->
-            if (fileSpec?.getOpStatus() == FileSpecOpStatus.VALID) {
+            FileSpecOpStatus status = fileSpec?.getOpStatus()
+            if (status == FileSpecOpStatus.VALID) {
                 plugin.logger.debug("submitted: ${fileSpec.getDepotPath()}")
             } else {
-                plugin.logger.error(fileSpec?.getStatusMessage())
+                if (status in [FileSpecOpStatus.ERROR, FileSpecOpStatus.CLIENT_ERROR, FileSpecOpStatus.UNKNOWN]) {
+                    plugin.logger.error(fileSpec?.getStatusMessage())
+                    result.success = false
+                    result.message = fileSpec?.getStatusMessage()
+                } else {
+                    plugin.logger.debug(fileSpec?.getStatusMessage())
+                }
             }
+        }
+
+        if (!result.success) {
+            srvClient.revertFiles(fileSpecs, new RevertFilesOptions())
         }
 
         // Change submitted, we can switch back to the global Perforce server instance.
         srv.logout()
         srv.disconnect()
 
-        result.success = true
         result.commit = new P4ScmCommit(P4Util.metaForCommit(change, plugin.p4Server))
 
         if (result.success && input[LabelAction.P_LABEL_NAME]) {

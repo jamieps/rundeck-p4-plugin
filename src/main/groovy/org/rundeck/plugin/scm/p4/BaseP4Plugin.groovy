@@ -234,7 +234,7 @@ class BaseP4Plugin {
     IChangelistSummary lastCommitForPath(String path) {
         // For files/directories at the root, prefix specs with the client root.
         if (!path.contains("/")) {
-            path = "//${p4Client.getName()}/${path}"
+            path = "${p4Client.getRoot()}/${path}"
         }
         List<IChangelistSummary> changes = []
         try {
